@@ -1,12 +1,28 @@
 # rsa stuff
 
 import math
+from factordb.factordb import FactorDB
 
 def gcd(a, b):
-    # gcd
-    while b:
-        a, b = b, a % b
-    return a
+    # fast binary gcd
+    if a == 0: return b
+    if b == 0: return a
+    
+    # remove factors of 2
+    shift = 0
+    while ((a | b) & 1) == 0:
+        a >>= 1
+        b >>= 1
+        shift += 1
+    
+    while (a & 1) == 0: a >>= 1
+    
+    while b != 0:
+        while (b & 1) == 0: b >>= 1
+        if a > b: a, b = b, a
+        b -= a
+    
+    return a << shift
 
 def extended_gcd(a, b):
     # extended gcd
@@ -39,62 +55,185 @@ def is_prime(n):
     return True
 
 def pollard_rho(n):
-    # pollard rho
-    if n % 2 == 0:
-        return 2
+    # enhanced pollard rho with brent's algorithm
+    if n % 2 == 0: return 2
+    if n % 3 == 0: return 3
     
-    x = 2
-    y = 2
-    d = 1
+    import random
     
-    def f(x):
-        return (x * x + 1) % n
+    # try multiple polynomials and starting points
+    for c in range(1, 20):
+        for start in [2, 3, 5, 7, 11, 13]:
+            x = start
+            y = start
+            d = 1
+            
+            # brent's cycle detection
+            r = 1
+            q = 1
+            
+            while d == 1:
+                ys = y
+                for _ in range(r):
+                    y = (y * y + c) % n
+                
+                k = 0
+                while k < r and d == 1:
+                    for _ in range(min(100, r - k)):
+                        y = (y * y + c) % n
+                        q = (q * abs(x - y)) % n
+                        k += 1
+                    
+                    d = gcd(q, n)
+                    
+                if d == 1:
+                    x = y
+                    r *= 2
+                
+                if d == n:
+                    d = 1
+                    while d == 1:
+                        ys = (ys * ys + c) % n
+                        d = gcd(abs(x - ys), n)
+            
+            if 1 < d < n:
+                return d
     
-    while d == 1:
-        x = f(x)
-        y = f(f(y))
-        d = gcd(abs(x - y), n)
-    
-    return d if d != n else None
+    return None
 
 def trial_division(n, limit=1000000):
-    # trial division
+    # optimized trial division with wheel
     factors = []
     
-    # check 2
-    while n % 2 == 0:
-        factors.append(2)
-        n = n // 2
+    # small primes
+    small_primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]
+    for p in small_primes:
+        while n % p == 0:
+            factors.append(p)
+            n = n // p
+        if n == 1: return factors
+        if p > limit or p * p > n: break
     
-    # check odd
-    for i in range(3, min(int(math.sqrt(n)) + 1, limit), 2):
+    # wheel 2*3*5 = 30
+    wheel = [4, 6, 10, 12, 16, 18, 22, 24]
+    i = 49
+    w = 0
+    sqrt_n = int(math.sqrt(n)) + 1
+    
+    while i <= min(sqrt_n, limit):
         while n % i == 0:
             factors.append(i)
             n = n // i
+        if n == 1: break
+        i += wheel[w]
+        w = (w + 1) % 8
     
     if n > 1:
         factors.append(n)
     
     return factors
 
+def pollard_p_minus_1(n, bound=1000000):
+    # pollard p-1 method
+    a = 2
+    for j in range(2, bound):
+        a = pow(a, j, n)
+        if j % 1000 == 0:  # check periodically
+            d = gcd(a - 1, n)
+            if 1 < d < n:
+                return d
+    
+    d = gcd(a - 1, n)
+    return d if 1 < d < n else None
+
+def fermat_factorization(n, max_iter=100000):
+    # fermat method for close primes
+    a = int(math.sqrt(n)) + 1
+    for _ in range(max_iter):
+        b2 = a * a - n
+        if b2 >= 0:
+            b = int(math.sqrt(b2))
+            if b * b == b2:
+                p = a + b
+                q = a - b
+                if p > 1 and q > 1:
+                    return min(p, q)
+        a += 1
+    return None
+
+def factorDB_factorization(n):
+    # use factorDB online database
+    try:
+        f = FactorDB(n)
+        f.connect()
+        
+        # get factors from factorDB
+        factors = f.get_factor_list()
+        
+        if factors and len(factors) >= 2:
+            # filter out 1 and n itself, get proper factors
+            proper_factors = [factor for factor in factors if factor != 1 and factor != n]
+            if len(proper_factors) >= 2:
+                return proper_factors[0], n // proper_factors[0]
+            elif len(proper_factors) == 1:
+                return proper_factors[0], n // proper_factors[0]
+        
+        return None, None
+        
+    except Exception as e:
+        print(f"FactorDB error: {e}")
+        return None, None
+
 def factor_n(n):
-    # factor n
+    # enhanced factorization with factorDB
+    import time
+    start_time = time.time()
     print(f"Factoring N = {n}")
+    print(f"N has {n.bit_length()} bits")
     
-    # First try trial division for small factors
-    factors = trial_division(n, 100000)
+    # method 1: factorDB (try online database first)
+    print("Trying FactorDB...")
+    factor, cofactor = factorDB_factorization(n)
+    if factor and cofactor:
+        elapsed = time.time() - start_time
+        print(f"FactorDB succeeded in {elapsed:.3f}s")
+        return factor, cofactor
     
+    # method 2: trial division
+    print("Trying trial division...")
+    factors = trial_division(n, 1000000)
     if len(factors) >= 2:
+        elapsed = time.time() - start_time
+        print(f"Trial division succeeded in {elapsed:.3f}s")
         return factors[0], n // factors[0]
     
-    # try pollard rho
-    print("Trying Pollard Rho...")
-    factor = pollard_rho(n)
+    # method 3: fermat (for close primes)
+    print("Trying Fermat...")
+    factor = fermat_factorization(n)
+    if factor:
+        elapsed = time.time() - start_time
+        print(f"Fermat succeeded in {elapsed:.3f}s")
+        return factor, n // factor
     
-    if factor and factor != n:
+    # method 4: pollard p-1
+    print("Trying Pollard P-1...")
+    factor = pollard_p_minus_1(n)
+    if factor:
+        elapsed = time.time() - start_time
+        print(f"Pollard P-1 succeeded in {elapsed:.3f}s")
+        return factor, n // factor
+    
+    # method 5: enhanced pollard rho
+    print("Trying Enhanced Pollard Rho...")
+    factor = pollard_rho(n)
+    if factor:
+        elapsed = time.time() - start_time
+        print(f"Pollard Rho succeeded in {elapsed:.3f}s")
         return factor, n // factor
     
     # failed
+    elapsed = time.time() - start_time
+    print(f"All methods failed after {elapsed:.3f}s")
     raise ValueError("Can't factor N")
 
 def rsa_decrypt(c, n, e):
@@ -124,8 +263,13 @@ def rsa_decrypt(c, n, e):
         print(f"d = {d}")
         print()
         
-        # decrypt
-        plaintext = pow(c, d, n)
+        # decrypt with timing
+        import time
+        print("Decrypting...")
+        start_time = time.time()
+        plaintext = pow(c, d, n)  # python's pow is already optimized
+        decrypt_time = time.time() - start_time
+        print(f"Decryption took {decrypt_time:.3f}s")
         print(f"Number: {plaintext}")
         
         # to text
